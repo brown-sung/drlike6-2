@@ -2,8 +2,17 @@
 const jStat = require('jstat');
 const lmsData = require('./lms-data.js');
 
+// 백분위수가 0 또는 100에 가까울 때 z-score가 무한대로 가는 것을 방지하는 안정성 함수
+function safeInv(percentile) {
+    const p = Math.max(0.0001, Math.min(99.9999, percentile)) / 100;
+    return jStat.normal.inv(p, 0, 1);
+}
+
 async function generateShortChartUrl(session) {
     const { sex, history } = session;
+    if (!sex || !history || history.length === 0) {
+        throw new Error("차트 생성을 위한 데이터(성별, 기록)가 부족합니다.");
+    }
     const sortedHistory = [...history].sort((a, b) => a.age_month - b.age_month);
 
     const hPercentiles = sortedHistory.map(d => d.h_percentile).filter(p => p != null);
@@ -15,9 +24,9 @@ async function generateShortChartUrl(session) {
     const predMonth = lastEntry.age_month + 12;
 
     const getPrediction = (avgP, type) => {
-        const lms = lmsData[sex]?.[type]?.[predMonth];
+        const lms = lmsData[sex]?.[type]?.[String(predMonth)];
         if (!lms || isNaN(avgP)) return null;
-        const z = jStat.normal.inv(avgP / 100, 0, 1);
+        const z = safeInv(avgP);
         return lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
     };
 
@@ -26,47 +35,44 @@ async function generateShortChartUrl(session) {
 
     const createPercentileDataset = (type, p) => {
         const data = Object.entries(lmsData[sex][type])
-            .filter(([month]) => {
+            .filter(([month]) => { // 데이터 샘플링으로 URL 길이 최적화
                 const m = parseInt(month);
-                if (m <= 24) return true;
-                if (m <= 72) return m % 6 === 0;
-                return m % 12 === 0;
+                if (m <= 24) return m % 2 === 0; // 24개월까지 2개월 간격
+                if (m <= 72) return m % 6 === 0; // 72개월까지 6개월 간격
+                return m % 12 === 0; // 이후 12개월 간격
             })
             .map(([month, lms]) => {
-                const z = jStat.normal.inv(p / 100, 0, 1);
+                const z = safeInv(p);
                 const value = lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
-                return { x: parseInt(month), y: value };
+                return { x: parseInt(month), y: parseFloat(value.toFixed(2)) };
             });
-        return { type: 'line', data, borderColor: 'gray', borderWidth: 1, pointRadius: 0, label: `${p}%` };
+        return { data, borderColor: 'rgba(255, 255, 255, 0.2)', borderWidth: 1, pointRadius: 0, label: `${p}%` };
     };
     
-    // --- ★★★ 최종 수정: Chart.js v3/v4 형식으로 options 객체 완벽 재작성 ★★★ ---
+    // --- ★★★ 최종 수정: Chart.js v4 형식으로 options 객체 완벽 재작성 ★★★ ---
     const chartConfig = {
         type: 'line',
         data: {
             datasets: [
+                // 키 관련 데이터셋
                 ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('height', p), yAxisID: 'yHeight' })),
-                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })), borderColor: 'deeppink', borderWidth: 2.5, yAxisID: 'yHeight', label: '키' },
-                predHeight && { data: [{x: lastEntry.age_month, y: lastEntry.height_cm}, {x: predMonth, y: predHeight}], borderColor: 'hotpink', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yHeight', label: '키 예측' },
-                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true })),
-                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })), borderColor: 'deepskyblue', borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게' },
-                predWeight && { data: [{x: lastEntry.age_month, y: lastEntry.weight_kg}, {x: predMonth, y: predWeight}], borderColor: 'lightskyblue', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게 예측' },
-            ].filter(Boolean)
+                { data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })).filter(d => d.y != null), borderColor: 'deeppink', borderWidth: 2.5, yAxisID: 'yHeight', label: '키', pointBackgroundColor: 'deeppink', pointRadius: 3 },
+                predHeight && lastEntry.height_cm && { data: [{ x: lastEntry.age_month, y: lastEntry.height_cm }, { x: predMonth, y: predHeight }], borderColor: 'hotpink', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yHeight', label: '키 예측' },
+                
+                // 몸무게 관련 데이터셋
+                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true, yAxisID: 'yWeight' })),
+                { data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })).filter(d => d.y != null), borderColor: 'deepskyblue', borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게', pointBackgroundColor: 'deepskyblue', pointRadius: 3 },
+                predWeight && lastEntry.weight_kg && { data: [{ x: lastEntry.age_month, y: lastEntry.weight_kg }, { x: predMonth, y: predWeight }], borderColor: 'lightskyblue', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게 예측' },
+            ].filter(Boolean) // null인 데이터셋은 최종적으로 제거
         },
         options: {
-            plugins: { // title과 legend는 plugins 객체 안에 있어야 합니다.
-                title: {
-                    display: true,
-                    text: '소아 성장 발달 곡선',
-                    color: 'white',
-                    font: { size: 18 }
-                },
-                legend: {
-                    labels: { color: 'white' }
-                }
+            plugins: { // title과 legend는 반드시 plugins 객체 안에 있어야 합니다.
+                title: { display: true, text: '소아 성장 발달 곡선', color: 'white', font: { size: 18 } },
+                legend: { labels: { color: 'white', filter: (item) => !item.text.includes('%') } } // 범례에서 백분위(%) 라인은 숨김
             },
-            scales: { // xAxes, yAxes 배열이 아닌 객체 형식으로 변경합니다.
+            scales: { // xAxes, yAxes 배열이 아닌, 각 축 ID를 키로 하는 객체 형식이어야 합니다.
                 x: {
+                    type: 'linear',
                     title: { display: true, text: '개월수', color: 'white' },
                     ticks: { color: 'white' },
                     grid: { color: 'rgba(255, 255, 255, 0.2)' }
@@ -83,8 +89,8 @@ async function generateShortChartUrl(session) {
                     position: 'right',
                     title: { display: true, text: '몸무게(kg)', color: 'white' },
                     ticks: { color: 'white' },
-                    grid: { drawOnChartArea: false }
-                },
+                    grid: { drawOnChartArea: false } // 오른쪽 Y축의 그리드 라인은 숨김
+                }
             }
         }
     };
@@ -93,17 +99,13 @@ async function generateShortChartUrl(session) {
     const response = await fetch('https://quickchart.io/chart/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            chart: chartConfig,
-            backgroundColor: '#1E1E1E',
-            format: 'png'
-        }),
+        body: JSON.stringify({ chart: chartConfig, backgroundColor: '#1E1E1E', format: 'png' }),
     });
 
     if (!response.ok) {
         const errorText = await response.text();
         console.error("QuickChart API Error:", errorText);
-        throw new Error("Failed to generate chart image via POST.");
+        throw new Error("차트 이미지 생성에 실패했습니다.");
     }
 
     const result = await response.json();
