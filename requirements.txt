@@ -2,7 +2,7 @@ Flask
 gunicorn
 git+https://github.com/upstash/qstash-python.git
 google-generativeai
-jstatpy
+scipy
 numpy
 matplotlib
 httpx
