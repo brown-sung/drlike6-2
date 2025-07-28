@@ -1,4 +1,4 @@
-# app.py
+# app.py (최종 수정본)
 
 import os
 import json
@@ -7,17 +7,14 @@ import google.generativeai as genai
 from flask import Flask, request, jsonify, send_from_directory
 from qstash import Client as QStashClient
 import numpy as np
-from scipy.stats import norm  # <-- 변경된 부분: jstat 대신 scipy.stats.norm 임포트
+import math # <-- scipy 대신 math 임포트
 
-# 분리된 모듈 import
 from prompts import get_decision_prompt
 from plot_generator import generate_growth_plot
 from lms_data import lms_data 
 
-# --- 1. 초기 설정 ---
 app = Flask(__name__)
 
-# 환경 변수 및 클라이언트 초기화
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 QSTASH_TOKEN = os.environ.get('QSTASH_TOKEN')
 VERCEL_URL = os.environ.get('VERCEL_URL') 
@@ -27,12 +24,11 @@ qstash_client = QStashClient(QSTASH_TOKEN)
 
 user_sessions = {}
 
-# --- 2. 유틸리티 함수 ---
 def calculate_percentile(value, lms):
     if not lms or value is None: return None
     L, M, S = lms['L'], lms['M'], lms['S']
     z_score = (((value / M) ** L) - 1) / (L * S) if L != 0 else np.log(value / M) / S
-    percentile = norm.cdf(z_score) * 100 # <-- 변경된 부분: jstat.normal.cdf 대신 norm.cdf 사용
+    percentile = (0.5 * (1 + math.erf(z_score / math.sqrt(2)))) * 100 # <-- scipy.stats.norm.cdf 대체
     return round(percentile, 1)
 
 async def call_gemini_for_decision(session, user_input):
@@ -47,7 +43,6 @@ def create_text_response(text):
 def create_image_response(image_url, summary):
     return {"version": "2.0", "template": {"outputs": [{"basicCard": {"title": "성장 발달 분석 결과", "description": summary, "thumbnail": {"imageUrl": image_url}, "buttons": [{"action": "message", "label": "처음부터 다시하기", "messageText": "다시"}]}}]}}
 
-# --- 3. API 엔드포인트 ---
 @app.route('/static/<filename>')
 def serve_static_from_tmp(filename):
     return send_from_directory('/tmp', filename)
@@ -118,4 +113,4 @@ async def process_job_chef():
 
 @app.route("/", methods=['GET'])
 def health_check():
-    return "✅ Modular Growth Chart Bot is running!", 200
+    return "✅ Lightweight Modular Growth Chart Bot is running!", 200
