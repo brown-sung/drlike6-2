@@ -1,6 +1,6 @@
 // plot-generator.js
 const jStat = require('jstat');
-const lmsData = require('./lms-data');
+const lmsData = require('./lms-data.js');
 
 function generateGrowthPlotUrl(session) {
     const { sex, history } = session;
@@ -33,33 +33,48 @@ function generateGrowthPlotUrl(session) {
         return { type: 'line', data, borderColor: 'gray', borderWidth: 1, pointRadius: 0, label: `${p}%` };
     };
     
-    // QuickChart에 보낼 Chart.js 설정 객체
+    // --- ★★★ 최종 수정: Chart.js v3 형식으로 options 객체 재작성 ★★★ ---
     const chartConfig = {
         type: 'line',
         data: {
             datasets: [
-                // Height Data
                 ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('height', p), yAxisID: 'yHeight' })),
                 { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })), borderColor: 'deeppink', borderWidth: 2, yAxisID: 'yHeight', label: '키' },
                 predHeight && { data: [{x: lastEntry.age_month, y: lastEntry.height_cm}, {x: predMonth, y: predHeight}], borderColor: 'hotpink', borderDash: [5, 5], borderWidth: 2, yAxisID: 'yHeight', label: '키 예측' },
-                // Weight Data
-                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true })), // 범례에서 숨김
+                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true })),
                 { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })), borderColor: 'deepskyblue', borderWidth: 2, yAxisID: 'yWeight', label: '몸무게' },
                 predWeight && { data: [{x: lastEntry.age_month, y: lastEntry.weight_kg}, {x: predMonth, y: predWeight}], borderColor: 'lightskyblue', borderDash: [5, 5], borderWidth: 2, yAxisID: 'yWeight', label: '몸무게 예측' },
             ].filter(Boolean)
         },
         options: {
-            title: { display: true, text: '소아 성장 발달 곡선', fontColor: 'white' },
-            scales: {
-                xAxes: [{ title: { display: true, text: '개월수', fontColor: 'white' }, ticks: { fontColor: 'white' }, gridLines: { color: 'rgba(255, 255, 255, 0.2)' } }],
-                yAxes: [
-                    { id: 'yHeight', type: 'linear', position: 'left', scaleLabel: { display: true, labelString: '키(cm)', fontColor: 'white' }, ticks: { fontColor: 'white' }, gridLines: { color: 'rgba(255, 255, 255, 0.2)' } },
-                    { id: 'yWeight', type: 'linear', position: 'right', scaleLabel: { display: true, labelString: '몸무게(kg)', fontColor: 'white' }, ticks: { fontColor: 'white' }, gridLines: { drawOnChartArea: false } },
-                ]
+            plugins: {
+                title: { display: true, text: '소아 성장 발달 곡선', color: 'white', font: { size: 18 } },
+                legend: { labels: { color: 'white' } }
             },
-            legend: { labels: { fontColor: 'white' } }
+            scales: {
+                x: {
+                    title: { display: true, text: '개월수', color: 'white' },
+                    ticks: { color: 'white' },
+                    grid: { color: 'rgba(255, 255, 255, 0.2)' }
+                },
+                yHeight: {
+                    type: 'linear',
+                    position: 'left',
+                    title: { display: true, text: '키(cm)', color: 'white' },
+                    ticks: { color: 'white' },
+                    grid: { color: 'rgba(255, 255, 255, 0.2)' }
+                },
+                yWeight: {
+                    type: 'linear',
+                    position: 'right',
+                    title: { display: true, text: '몸무게(kg)', color: 'white' },
+                    ticks: { color: 'white' },
+                    grid: { drawOnChartArea: false }
+                },
+            }
         }
     };
+    // -------------------------------------------------------------------
 
     const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
     return `https://quickchart.io/chart?bkg=%231E1E1E&c=${encodedConfig}`;
