@@ -1,10 +1,11 @@
 # plot_generator.py
+
 import os
 import matplotlib
-matplotlib.use('Agg')  # Vercel과 같은 비-GUI 환경을 위한 필수 설정
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-from jstat import jstat
+from scipy.stats import norm  # <-- 변경된 부분: jstat 대신 scipy.stats.norm 임포트
 from lms_data import lms_data
 
 def generate_growth_plot(user_id, session, vercel_url):
@@ -28,19 +29,19 @@ def generate_growth_plot(user_id, session, vercel_url):
     # 키 예측
     lms_h = lms_data.get(sex, {}).get('height', {}).get(str(pred_month))
     if lms_h and not np.isnan(avg_h_p):
-        z = jstat.normal.inv(avg_h_p / 100, 0, 1)
+        z = norm.ppf(avg_h_p / 100) # <-- 변경된 부분: jstat.normal.inv 대신 norm.ppf 사용
         pred_height = lms_h['M'] * ((lms_h['L'] * lms_h['S'] * z + 1) ** (1/lms_h['L'])) if lms_h['L'] != 0 else lms_h['M'] * np.exp(lms_h['S'] * z)
 
     # 몸무게 예측
     lms_w = lms_data.get(sex, {}).get('weight', {}).get(str(pred_month))
     if lms_w and not np.isnan(avg_w_p):
-        z = jstat.normal.inv(avg_w_p / 100, 0, 1)
+        z = norm.ppf(avg_w_p / 100) # <-- 변경된 부분: jstat.normal.inv 대신 norm.ppf 사용
         pred_weight = lms_w['M'] * ((lms_w['L'] * lms_w['S'] * z + 1) ** (1/lms_w['L'])) if lms_w['L'] != 0 else lms_w['M'] * np.exp(lms_w['S'] * z)
         
     # --- 그래프 생성 시작 ---
     plt.style.use('dark_background')
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10), constrained_layout=True)
-    plt.rc('font', family='NanumBarunGothic') # 시스템에 설치된 한글 폰트
+    plt.rc('font', family='NanumBarunGothic') 
     
     # 키(ax1)와 몸무게(ax2) 그래프 그리기
     axes = {'height': ax1, 'weight': ax2}
@@ -52,7 +53,7 @@ def generate_growth_plot(user_id, session, vercel_url):
         for p in [3, 10, 50, 90, 97]:
             months, values = [], []
             for m_str, lms in lms_data[sex][data_type].items():
-                z = jstat.normal.inv(p/100, 0, 1)
+                z = norm.ppf(p/100) # <-- 변경된 부분: jstat.normal.inv 대신 norm.ppf 사용
                 val = lms['M'] * ((lms['L'] * lms['S'] * z + 1) ** (1/lms['L'])) if lms['L'] != 0 else lms['M'] * np.exp(lms['S'] * z)
                 months.append(int(m_str)); values.append(val)
             ax.plot(sorted(months), [y for _, y in sorted(zip(months, values))], color='gray', lw=0.8)
