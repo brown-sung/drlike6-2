@@ -1,15 +1,18 @@
 # app.py
+
 import os
 import json
 import httpx
 import google.generativeai as genai
 from flask import Flask, request, jsonify, send_from_directory
 from qstash import Client as QStashClient
+import numpy as np
+from scipy.stats import norm  # <-- 변경된 부분: jstat 대신 scipy.stats.norm 임포트
 
 # 분리된 모듈 import
 from prompts import get_decision_prompt
 from plot_generator import generate_growth_plot
-from lms_data import lms_data # 백분위 계산을 위해 필요
+from lms_data import lms_data 
 
 # --- 1. 초기 설정 ---
 app = Flask(__name__)
@@ -26,13 +29,10 @@ user_sessions = {}
 
 # --- 2. 유틸리티 함수 ---
 def calculate_percentile(value, lms):
-    # plot_generator에 동일한 함수가 있지만, 데이터 추가 시 즉각적인 피드백을 위해 여기에도 둡니다.
     if not lms or value is None: return None
-    from jstat import jstat
-    import numpy as np
     L, M, S = lms['L'], lms['M'], lms['S']
     z_score = (((value / M) ** L) - 1) / (L * S) if L != 0 else np.log(value / M) / S
-    percentile = jstat.normal.cdf(z_score, 0, 1) * 100
+    percentile = norm.cdf(z_score) * 100 # <-- 변경된 부분: jstat.normal.cdf 대신 norm.cdf 사용
     return round(percentile, 1)
 
 async def call_gemini_for_decision(session, user_input):
@@ -85,10 +85,10 @@ async def process_job_chef():
             new_entry = {k: data.get(k) for k in ['age_month', 'height_cm', 'weight_kg']}
             sex = session.get('sex')
             if sex and new_entry.get('height_cm'):
-                lms = lms_data[sex]['height'].get(str(new_entry['age_month']))
+                lms = lms_data.get(sex, {}).get('height', {}).get(str(new_entry['age_month']))
                 new_entry['h_percentile'] = calculate_percentile(new_entry['height_cm'], lms)
             if sex and new_entry.get('weight_kg'):
-                lms = lms_data[sex]['weight'].get(str(new_entry['age_month']))
+                lms = lms_data.get(sex, {}).get('weight', {}).get(str(new_entry['age_month']))
                 new_entry['w_percentile'] = calculate_percentile(new_entry['weight_kg'], lms)
             session['history'].append(new_entry)
             responseText = ("정보가 추가되었습니다. 과거 정보를 더 입력하시거나, '분석'이라고 말씀해주세요." if len(session['history']) >= 2 
@@ -102,7 +102,7 @@ async def process_job_chef():
         elif action == 'reset':
             session = {"history": []}
             final_response = create_text_response('네, 처음부터 다시 시작하겠습니다. 아이 정보를 알려주세요.')
-        else: # greet, ask_for_info 등
+        else:
             responseText = '안녕하세요! 아이의 성별, 나이, 키, 몸무게를 알려주세요.' if not session.get('sex') else "다음 정보를 알려주세요. (예: 12개월 75cm 9.8kg)"
             final_response = create_text_response(responseText)
             
