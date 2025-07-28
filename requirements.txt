@@ -1,6 +1,6 @@
 Flask
 gunicorn
-upstash-qstash
+upstash_qstash
 google-generativeai
 jstatpy
 numpy
