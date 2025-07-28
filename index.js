@@ -39,25 +39,18 @@ async function callGeminiForDecision(session, userInput) {
     const responseText = result.response.text();
     console.log("Gemini API 응답 수신 (Raw):", responseText);
 
-    // --- ★★★ 최종 수정: Markdown 블록 제거 로직 추가 ★★★ ---
     const match = responseText.match(/\{[\s\S]*\}/);
     if (!match) {
-        console.error("Gemini 응답에서 유효한 JSON 블록을 찾지 못했습니다.");
         throw new Error("AI가 유효하지 않은 형식의 답변을 보냈습니다.");
     }
     const cleanedJsonString = match[0];
-    console.log("정리된 JSON 문자열:", cleanedJsonString);
-    // -----------------------------------------------------------
-
-    try {
-        return JSON.parse(cleanedJsonString);
-    } catch (e) {
-        console.error("정리된 JSON 파싱 실패:", e);
-        throw new Error("AI가 보낸 답변의 JSON 구조가 잘못되었습니다.");
-    }
+    
+    return JSON.parse(cleanedJsonString);
 }
 
 const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
+
+// --- ★★★ 최종 수정: buttons 배열 및 thumbnail 형식 수정 ★★★ ---
 const createImageResponse = (imageUrl, summary) => ({
     version: "2.0",
     template: {
@@ -65,12 +58,21 @@ const createImageResponse = (imageUrl, summary) => ({
             basicCard: {
                 title: "성장 발달 분석 결과",
                 description: summary,
-                thumbnail: { imageUrl },
-                buttons: [{ action: "message", label: "처음부터 다시하기", messageText: "다시" }]
+                thumbnail: {
+                    imageUrl: imageUrl // 가독성을 위해 명시적으로 표현
+                },
+                buttons: [ // 이중 배열 "[[...]]"을 단일 배열 "[...]"로 수정
+                    {
+                        action: "message",
+                        label: "처음부터 다시하기",
+                        messageText: "다시"
+                    }
+                ]
             }
         }]
     }
 });
+// -----------------------------------------------------------
 
 app.post('/skill', async (req, res) => {
     try {
