@@ -40,13 +40,15 @@ async function callGeminiForDecision(session, userInput) {
     return JSON.parse(match[0]);
 }
 const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
-const createImageResponse = (imageUrl, summary) => ({
+
+// --- ★★★ 최종 수정: description 속성 제거 ★★★ ---
+const createImageResponse = (imageUrl) => ({
     version: "2.0",
     template: {
         outputs: [{
             basicCard: {
                 title: "성장 발달 분석 결과",
-                description: summary,
+                // description: summary, // <- 이 줄을 완전히 삭제했습니다.
                 thumbnail: { imageUrl: imageUrl },
                 buttons: [{ action: "message", label: "처음부터 다시하기", messageText: "다시" }]
             }
@@ -56,7 +58,6 @@ const createImageResponse = (imageUrl, summary) => ({
 
 app.post('/skill', async (req, res) => {
     try {
-        console.log("[/skill] 요청 수신");
         const userId = req.body.userRequest.user.id;
         const jobPayload = { reqBody: req.body, session: userSessions[userId] || { history: [] } };
         
@@ -64,7 +65,6 @@ app.post('/skill', async (req, res) => {
             url: `https://${VERCEL_URL}/api/process-job`,
             body: jobPayload,
         });
-        console.log("[/skill] QStash 작업 게시 완료");
         res.json({ version: "2.0", useCallback: true });
     } catch (e) {
         console.error("[/skill] 오류 발생:", e);
@@ -73,7 +73,6 @@ app.post('/skill', async (req, res) => {
 });
 
 app.post('/api/process-job', async (req, res) => {
-    console.log("[/api/process-job] QStash로부터 작업 수신");
     const { reqBody, session } = req.body;
     const { userRequest: { user: { id: userId }, utterance, callbackUrl } } = reqBody;
     let finalResponse;
@@ -97,11 +96,8 @@ app.post('/api/process-job', async (req, res) => {
             const responseText = session.history.length >= 2 ? "정보가 추가되었습니다. '분석'이라고 말씀해주세요." : "정보가 입력되었습니다. 과거 정보를 1개 더 입력해주세요.";
             finalResponse = createTextResponse(responseText);
         } else if (action === 'generate_report' && session.history?.length >= 2) {
-            console.log("그래프 생성 시작...");
             const imageUrl = await generateShortChartUrl(session); 
-            console.log("그래프 URL 생성 완료:", imageUrl);
-            const summary = `${session.history.length}개 기록으로 분석했어요.\n12개월 후 예상 성장치도 표시됩니다.`;
-            finalResponse = createImageResponse(imageUrl, summary);
+            finalResponse = createImageResponse(imageUrl); // summary 인자 제거
             delete userSessions[userId];
         } else if (action === 'reset') {
             delete userSessions[userId];
@@ -118,13 +114,11 @@ app.post('/api/process-job', async (req, res) => {
     }
 
     try {
-        console.log("카카오 콜백 URL로 최종 응답 전송 시도...");
         await fetch(callbackUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(finalResponse)
         });
-        console.log("카카오 콜백 전송 성공");
     } catch (e) {
         console.error("카카오 콜백 전송 실패:", e);
     }
@@ -132,6 +126,6 @@ app.post('/api/process-job', async (req, res) => {
     res.status(200).send("OK");
 });
 
-app.get("/", (req, res) => res.send("✅ Final JS Growth Bot is running!"));
+app.get("/", (req, res) => res.send("✅ Final JS Growth Bot (White Theme) is running!"));
 
 module.exports = app;
