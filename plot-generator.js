@@ -2,7 +2,7 @@
 const jStat = require('jstat');
 const lmsData = require('./lms-data.js');
 
-function generateGrowthPlotUrl(session) {
+async function generateShortChartUrl(session) {
     const { sex, history } = session;
     const sortedHistory = [...history].sort((a, b) => a.age_month - b.age_month);
 
@@ -25,15 +25,21 @@ function generateGrowthPlotUrl(session) {
     const predWeight = getPrediction(avgWP, 'weight');
 
     const createPercentileDataset = (type, p) => {
-        const data = Object.entries(lmsData[sex][type]).map(([month, lms]) => {
-            const z = jStat.normal.inv(p / 100, 0, 1);
-            const value = lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
-            return { x: parseInt(month), y: value };
-        });
+        const data = Object.entries(lmsData[sex][type])
+            .filter(([month]) => {
+                const m = parseInt(month);
+                if (m <= 24) return true;
+                if (m <= 72) return m % 6 === 0;
+                return m % 12 === 0;
+            })
+            .map(([month, lms]) => {
+                const z = jStat.normal.inv(p / 100, 0, 1);
+                const value = lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
+                return { x: parseInt(month), y: value };
+            });
         return { type: 'line', data, borderColor: 'gray', borderWidth: 1, pointRadius: 0, label: `${p}%` };
     };
     
-    // --- ★★★ 최종 수정: Chart.js v3 형식으로 options 객체 재작성 ★★★ ---
     const chartConfig = {
         type: 'line',
         data: {
@@ -52,32 +58,32 @@ function generateGrowthPlotUrl(session) {
                 legend: { labels: { color: 'white' } }
             },
             scales: {
-                x: {
-                    title: { display: true, text: '개월수', color: 'white' },
-                    ticks: { color: 'white' },
-                    grid: { color: 'rgba(255, 255, 255, 0.2)' }
-                },
-                yHeight: {
-                    type: 'linear',
-                    position: 'left',
-                    title: { display: true, text: '키(cm)', color: 'white' },
-                    ticks: { color: 'white' },
-                    grid: { color: 'rgba(255, 255, 255, 0.2)' }
-                },
-                yWeight: {
-                    type: 'linear',
-                    position: 'right',
-                    title: { display: true, text: '몸무게(kg)', color: 'white' },
-                    ticks: { color: 'white' },
-                    grid: { drawOnChartArea: false }
-                },
+                x: { title: { display: true, text: '개월수', color: 'white' }, ticks: { color: 'white' }, grid: { color: 'rgba(255, 255, 255, 0.2)' } },
+                yHeight: { type: 'linear', position: 'left', title: { display: true, text: '키(cm)', color: 'white' }, ticks: { color: 'white' }, grid: { color: 'rgba(255, 255, 255, 0.2)' } },
+                yWeight: { type: 'linear', position: 'right', title: { display: true, text: '몸무게(kg)', color: 'white' }, ticks: { color: 'white' }, grid: { drawOnChartArea: false } },
             }
         }
     };
-    // -------------------------------------------------------------------
 
-    const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
-    return `https://quickchart.io/chart?bkg=%231E1E1E&c=${encodedConfig}`;
+    // --- ★★★ 최종 수정: POST 요청으로 변경 ★★★ ---
+    const response = await fetch('https://quickchart.io/chart/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            chart: chartConfig,
+            backgroundColor: '#1E1E1E',
+            format: 'png'
+        }),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error("QuickChart API Error:", errorText);
+        throw new Error("Failed to generate chart image via POST.");
+    }
+
+    const result = await response.json();
+    return result.url; // 짧은 URL (예: https://quickchart.io/chart/render/...) 반환
 }
 
-module.exports = { generateGrowthPlotUrl };
+module.exports = { generateShortChartUrl }; // 함수 이름 변경
