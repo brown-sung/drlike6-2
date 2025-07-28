@@ -15,7 +15,7 @@ app.use(express.json());
 const { GEMINI_API_KEY, QSTASH_TOKEN, VERCEL_URL } = process.env;
 
 if (!GEMINI_API_KEY || !QSTASH_TOKEN || !VERCEL_URL) {
-    console.error("CRITICAL: 환경 변수가 누락되었습니다!");
+    console.error("CRITICAL: 환경 변수가 누락되었습니다! GEMINI_API_KEY, QSTASH_TOKEN, VERCEL_URL을 확인하세요.");
 }
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -30,79 +30,57 @@ function calculatePercentile(value, lms) {
     const percentile = jStat.normal.cdf(zScore, 0, 1) * 100;
     return parseFloat(percentile.toFixed(1));
 }
-
-// 50백분위에 해당하는 값을 계산하는 함수 (또래 평균)
-function getPeerAverage(sex, age, type) {
-    const lms = lmsData[sex]?.[type]?.[String(age)];
-    if (!lms) return null;
-    return lms.M; // M 값이 50백분위의 중앙값임
-}
-
 async function callGeminiForDecision(session, userInput) {
-    // ... (이 함수는 변경 없음)
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = getDecisionPrompt(session, userInput);
+    
+    console.log("Gemini API 호출 시작...");
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
+    console.log("Gemini API 응답 수신 (Raw):", responseText);
+
     const match = responseText.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("AI가 유효하지 않은 형식의 답변을 보냈습니다.");
-    return JSON.parse(match[0]);
+    
+    const cleanedJsonString = match[0];
+    console.log("정리된 JSON 문자열:", cleanedJsonString);
+    
+    return JSON.parse(cleanedJsonString);
 }
 const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
-
-// --- ★★★ 최종 수정: 여러 말풍선으로 응답을 구성하는 함수 ★★★ ---
-const createFinalReportResponse = (lastEntry, peerAverageWeight, imageUrl) => {
-    const outputs = [];
-
-    // 1. 첫 번째 말풍선: 요약 정보
-    if (lastEntry.weight_kg && lastEntry.w_percentile) {
-        outputs.push({
-            simpleText: {
-                text: `${lastEntry.weight_kg}kg (${lastEntry.w_percentile}백분위)`
+const createImageResponse = (imageUrl) => ({
+    version: "2.0",
+    template: {
+        outputs: [{
+            basicCard: {
+                title: "성장 발달 분석 결과",
+                thumbnail: { imageUrl: imageUrl },
+                buttons: [{ action: "message", label: "처음부터 다시하기", messageText: "다시" }]
             }
-        });
-    } else if (lastEntry.height_cm && lastEntry.h_percentile) {
-        outputs.push({
-            simpleText: {
-                text: `${lastEntry.height_cm}cm (${lastEntry.h_percentile}백분위)`
-            }
-        });
+        }]
     }
+});
 
-    // 2. 두 번째 말풍선: 또래 평균 정보
-    if (peerAverageWeight) {
-         outputs.push({
-            simpleText: {
-                text: `· 또래 평균 몸무게: 약 ${peerAverageWeight.toFixed(1)}kg`
-            }
-        });
-    }
-    
-    // 3. 세 번째 말풍선: 그래프 이미지
-    outputs.push({
-        simpleImage: {
-            imageUrl: imageUrl,
-            altText: "소아 성장 발달 곡선 분석 결과"
-        }
-    });
-
-    return { version: "2.0", template: { outputs } };
-};
-
-// ... (app.post('/skill', ...) 함수는 변경 없음) ...
 app.post('/skill', async (req, res) => {
     try {
+        console.log("[/skill] 요청 수신");
         const userId = req.body.userRequest.user.id;
         const jobPayload = { reqBody: req.body, session: userSessions[userId] || { history: [] } };
-        await qstash.publishJSON({ url: `https://${VERCEL_URL}/api/process-job`, body: jobPayload });
+        
+        await qstash.publishJSON({
+            url: `https://${VERCEL_URL}/api/process-job`,
+            body: jobPayload,
+        });
+        console.log("[/skill] QStash 작업 게시 완료");
         res.json({ version: "2.0", useCallback: true });
     } catch (e) {
+        console.error("[/skill] 오류 발생:", e);
         res.status(500).json(createTextResponse("요청 처리 중 서버 오류가 발생했습니다."));
     }
 });
 
-
 app.post('/api/process-job', async (req, res) => {
+    console.log("[/api/process-job] QStash로부터 작업 수신");
     const { reqBody, session } = req.body;
     const { userRequest: { user: { id: userId }, utterance, callbackUrl } } = reqBody;
     let finalResponse;
@@ -110,6 +88,7 @@ app.post('/api/process-job', async (req, res) => {
     try {
         const decision = await callGeminiForDecision(session, utterance);
         const { action, data } = decision;
+        console.log(`[Action: ${action}]`, "Data:", data);
 
         if (data?.sex && !session.sex) session.sex = data.sex;
 
@@ -125,15 +104,11 @@ app.post('/api/process-job', async (req, res) => {
             session.history.push(newEntry);
             const responseText = session.history.length >= 2 ? "정보가 추가되었습니다. '분석'이라고 말씀해주세요." : "정보가 입력되었습니다. 과거 정보를 1개 더 입력해주세요.";
             finalResponse = createTextResponse(responseText);
-
         } else if (action === 'generate_report' && session.history?.length >= 2) {
-            const lastEntry = session.history[session.history.length - 1];
-            const peerAverageWeight = getPeerAverage(session.sex, lastEntry.age_month, 'weight');
-            
+            console.log("그래프 생성 시작...");
             const imageUrl = await generateShortChartUrl(session); 
-            
-            finalResponse = createFinalReportResponse(lastEntry, peerAverageWeight, imageUrl);
-            
+            console.log("그래프 URL 생성 완료:", imageUrl);
+            finalResponse = createImageResponse(imageUrl);
             delete userSessions[userId];
         } else if (action === 'reset') {
             delete userSessions[userId];
@@ -150,11 +125,13 @@ app.post('/api/process-job', async (req, res) => {
     }
 
     try {
+        console.log("카카오 콜백 URL로 최종 응답 전송 시도...", callbackUrl);
         await fetch(callbackUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(finalResponse)
         });
+        console.log("카카오 콜백 전송 성공");
     } catch (e) {
         console.error("카카오 콜백 전송 실패:", e);
     }
@@ -162,6 +139,6 @@ app.post('/api/process-job', async (req, res) => {
     res.status(200).send("OK");
 });
 
-app.get("/", (req, res) => res.send("✅ Final JS Growth Bot (White Theme) is running!"));
+app.get("/", (req, res) => res.send("✅ Final JS Growth Bot (with Logging) is running!"));
 
 module.exports = app;
