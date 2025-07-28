@@ -2,7 +2,6 @@
 const jStat = require('jstat');
 const lmsData = require('./lms-data.js');
 
-// 백분위수가 0 또는 100에 가까울 때 z-score가 무한대로 가는 것을 방지하는 안정성 함수
 function safeInv(percentile) {
     const p = Math.max(0.001, Math.min(99.999, percentile)) / 100;
     return jStat.normal.inv(p, 0, 1);
@@ -33,7 +32,6 @@ async function generateShortChartUrl(session) {
     const predHeight = getPrediction(avgHP, 'height');
     const predWeight = getPrediction(avgWP, 'weight');
     
-    // --- ★★★ 최종 수정: 레퍼런스 이미지 디자인 적용 ★★★ ---
     const PERCENTILE_COLORS = {
         3: '#8DB3E2', 5: '#8DB3E2', 10: '#8DB3E2', 25: '#B4D3F0',
         50: '#B4D3F0', 75: '#F7CB8B', 90: '#F4B66B', 95: '#F4B66B', 97: '#F4B66B'
@@ -54,7 +52,7 @@ async function generateShortChartUrl(session) {
             });
         return { data, borderColor: PERCENTILE_COLORS[p], borderWidth: 1.5, pointRadius: 0, label: `${p}%` };
     };
-
+    
     const chartConfig = {
         type: 'line',
         data: {
@@ -67,14 +65,10 @@ async function generateShortChartUrl(session) {
         },
         options: {
             plugins: {
-                title: { display: false },
-                legend: { display: false }, // 범례는 숨김
-                // 백분위 라벨을 곡선 끝에 추가하는 플러그인 설정
+                title: { display: true, text: '소아 성장 발달 곡선', color: '#333', font: { size: 22, weight: 'bold' } },
+                legend: { labels: { color: '#333', filter: (item) => !item.text.includes('%') } },
                 datalabels: {
-                    color: '#555',
-                    align: 'end',
-                    anchor: 'end',
-                    font: { size: 10 },
+                    color: '#555', align: 'end', anchor: 'end', font: { size: 10 },
                     formatter: (value, context) => {
                         const dataset = context.dataset;
                         if (dataset.label.includes('%') && context.dataIndex === dataset.data.length - 1) {
@@ -85,31 +79,25 @@ async function generateShortChartUrl(session) {
                 }
             },
             scales: {
-                x: {
-                    title: { display: true, text: '개월수 (월)', color: '#333' },
-                    ticks: { color: '#666' },
-                    grid: { color: 'rgba(0, 0, 0, 0.1)' }
-                },
-                yHeight: {
-                    type: 'linear', position: 'left',
-                    title: { display: true, text: '키(cm)', color: '#333' },
-                    ticks: { color: '#666' },
-                    grid: { color: 'rgba(0, 0, 0, 0.1)' }
-                },
-                yWeight: {
-                    type: 'linear', position: 'right',
-                    title: { display: true, text: '몸무게(kg)', color: '#333' },
-                    ticks: { color: '#666' },
-                    grid: { drawOnChartArea: false }
-                }
+                x: { title: { display: true, text: '개월수 (월)', color: '#333' }, ticks: { color: '#666' }, grid: { color: 'rgba(0, 0, 0, 0.1)' } },
+                yHeight: { type: 'linear', position: 'left', title: { display: true, text: '키(cm)', color: '#333' }, ticks: { color: '#666' }, grid: { color: 'rgba(0, 0, 0, 0.1)' } },
+                yWeight: { type: 'linear', position: 'right', title: { display: true, text: '몸무게(kg)', color: '#333' }, ticks: { color: '#666' }, grid: { drawOnChartArea: false } }
             }
         }
     };
 
+    // --- ★★★ 최종 수정: 세로가 긴 형태로 width, height 설정 ★★★ ---
     const response = await fetch('https://quickchart.io/chart/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chart: chartConfig, backgroundColor: 'white', format: 'png', version: '4' }),
+        body: JSON.stringify({
+            chart: chartConfig,
+            backgroundColor: 'white',
+            width: 500, // 너비
+            height: 700, // 높이
+            format: 'png',
+            version: '4'
+        }),
     });
 
     if (!response.ok) {
