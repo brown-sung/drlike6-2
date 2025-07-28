@@ -1,90 +1,159 @@
-// plot-generator.js
+// index.js
+const express = require('express');
+const { Client } = require('@upstash/qstash');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const jStat = require('jstat');
+
 const lmsData = require('./lms-data.js');
+const { getDecisionPrompt } = require('./prompts.js');
+const { generateShortChartUrl } = require('./plot-generator.js'); // 변경됨
 
-function generateGrowthPlotUrl(session) {
-    const { sex, history } = session;
-    const sortedHistory = [...history].sort((a, b) => a.age_month - b.age_month);
+const app = express();
+app.use(express.json());
 
-    const hPercentiles = sortedHistory.map(d => d.h_percentile).filter(p => p != null);
-    const wPercentiles = sortedHistory.map(d => d.w_percentile).filter(p => p != null);
-    const avgHP = hPercentiles.length > 0 ? hPercentiles.reduce((a, b) => a + b, 0) / hPercentiles.length : NaN;
-    const avgWP = wPercentiles.length > 0 ? wPercentiles.reduce((a, b) => a + b, 0) / wPercentiles.length : NaN;
+const { GEMINI_API_KEY, QSTASH_TOKEN, VERCEL_URL } = process.env;
 
-    const lastEntry = sortedHistory[sortedHistory.length - 1];
-    const predMonth = lastEntry.age_month + 12;
-
-    const getPrediction = (avgP, type) => {
-        const lms = lmsData[sex]?.[type]?.[predMonth];
-        if (!lms || isNaN(avgP)) return null;
-        const z = jStat.normal.inv(avgP / 100, 0, 1);
-        return lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
-    };
-
-    const predHeight = getPrediction(avgHP, 'height');
-    const predWeight = getPrediction(avgWP, 'weight');
-
-    const createPercentileDataset = (type, p) => {
-        const data = Object.entries(lmsData[sex][type])
-            .filter(([month]) => {
-                const m = parseInt(month);
-                if (m <= 24) return true;
-                if (m <= 72) return m % 6 === 0;
-                return m % 12 === 0;
-            })
-            .map(([month, lms]) => {
-                const z = jStat.normal.inv(p / 100, 0, 1);
-                const value = lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
-                return { x: parseInt(month), y: value };
-            });
-        return { type: 'line', data, borderColor: 'gray', borderWidth: 1, pointRadius: 0, label: `${p}%` };
-    };
-    
-    const chartConfig = {
-        type: 'line',
-        data: {
-            datasets: [
-                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('height', p), yAxisID: 'yHeight' })),
-                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })), borderColor: 'deeppink', borderWidth: 2, yAxisID: 'yHeight', label: '키' },
-                predHeight && { data: [{x: lastEntry.age_month, y: lastEntry.height_cm}, {x: predMonth, y: predHeight}], borderColor: 'hotpink', borderDash: [5, 5], borderWidth: 2, yAxisID: 'yHeight', label: '키 예측' },
-                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true })),
-                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })), borderColor: 'deepskyblue', borderWidth: 2, yAxisID: 'yWeight', label: '몸무게' },
-                predWeight && { data: [{x: lastEntry.age_month, y: lastEntry.weight_kg}, {x: predMonth, y: predWeight}], borderColor: 'lightskyblue', borderDash: [5, 5], borderWidth: 2, yAxisID: 'yWeight', label: '몸무게 예측' },
-            ].filter(Boolean)
-        },
-        options: {
-            plugins: {
-                title: { display: true, text: '소아 성장 발달 곡선', color: 'white', font: { size: 18 } },
-                legend: { labels: { color: 'white' } }
-            },
-            scales: {
-                x: {
-                    title: { display: true, text: '개월수', color: 'white' },
-                    ticks: { color: 'white' },
-                    grid: { color: 'rgba(255, 255, 255, 0.2)' }
-                },
-                yHeight: {
-                    type: 'linear',
-                    position: 'left',
-                    title: { display: true, text: '키(cm)', color: 'white' },
-                    ticks: { color: 'white' },
-                    grid: { color: 'rgba(255, 255, 255, 0.2)' }
-                },
-                yWeight: {
-                    type: 'linear',
-                    position: 'right',
-                    title: { display: true, text: '몸무게(kg)', color: 'white' },
-                    ticks: { color: 'white' },
-                    grid: { drawOnChartArea: false }
-                },
-            }
-        }
-    };
-
-    const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
-    
-    // --- ★★★ 최종 수정: URL에 ".png" 확장자 추가 ★★★ ---
-    return `https://quickchart.io/chart.png?bkg=%231E1E1E&c=${encodedConfig}`;
+if (!GEMINI_API_KEY || !QSTASH_TOKEN || !VERCEL_URL) {
+    console.error("중요 환경 변수가 누락되었습니다!");
 }
 
-module.exports = { generateGrowthPlotUrl };
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const qstash = new Client({ token: QSTASH_TOKEN });
+
+const userSessions = {};
+
+function calculatePercentile(value, lms) {
+    if (!lms || value == null) return null;
+    const { L, M, S } = lms;
+    const zScore = L !== 0 ? (Math.pow(value / M, L) - 1) / (L * S) : Math.log(value / M) / S;
+    const percentile = jStat.normal.cdf(zScore, 0, 1) * 100;
+    return parseFloat(percentile.toFixed(1));
+}
+
+async function callGeminiForDecision(session, userInput) {
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = getDecisionPrompt(session, userInput);
+    
+    console.log("Gemini API 호출 시작...");
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+    console.log("Gemini API 응답 수신 (Raw):", responseText);
+
+    const match = responseText.match(/\{[\s\S]*\}/);
+    if (!match) {
+        throw new Error("AI가 유효하지 않은 형식의 답변을 보냈습니다.");
+    }
+    const cleanedJsonString = match[0];
+    
+    return JSON.parse(cleanedJsonString);
+}
+
+const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
+const createImageResponse = (imageUrl, summary) => ({
+    version: "2.0",
+    template: {
+        outputs: [{
+            basicCard: {
+                title: "성장 발달 분석 결과",
+                description: summary,
+                thumbnail: {
+                    imageUrl: imageUrl
+                },
+                buttons: [
+                    {
+                        action: "message",
+                        label: "처음부터 다시하기",
+                        messageText: "다시"
+                    }
+                ]
+            }
+        }]
+    }
+});
+
+app.post('/skill', async (req, res) => {
+    try {
+        console.log("[/skill] 요청 수신");
+        const userId = req.body.userRequest.user.id;
+        const jobPayload = { reqBody: req.body, session: userSessions[userId] || { history: [] } };
+        
+        await qstash.publishJSON({
+            url: `https://${VERCEL_URL}/api/process-job`,
+            body: jobPayload,
+        });
+        console.log("[/skill] QStash 작업 게시 완료");
+        res.json({ version: "2.0", useCallback: true });
+    } catch (e) {
+        console.error("[/skill] 오류 발생:", e);
+        res.status(500).json(createTextResponse("요청 처리 중 서버 오류가 발생했습니다."));
+    }
+});
+
+app.post('/api/process-job', async (req, res) => {
+    console.log("[/api/process-job] QStash로부터 작업 수신");
+    const { reqBody, session } = req.body;
+    const { userRequest: { user: { id: userId }, utterance, callbackUrl } } = reqBody;
+    let finalResponse;
+
+    try {
+        const decision = await callGeminiForDecision(session, utterance);
+        const { action, data } = decision;
+        console.log(`[Action: ${action}]`, "Data:", data);
+
+        if (data?.sex && !session.sex) session.sex = data.sex;
+
+        if (action === 'add_data' && data.age_month && (data.height_cm || data.weight_kg)) {
+            const newEntry = {
+                age_month: data.age_month,
+                height_cm: data.height_cm,
+                weight_kg: data.weight_kg,
+            };
+            if (session.sex && newEntry.height_cm && lmsData[session.sex]?.height?.[newEntry.age_month]) {
+                 newEntry.h_percentile = calculatePercentile(newEntry.height_cm, lmsData[session.sex].height[newEntry.age_month]);
+            }
+            if (session.sex && newEntry.weight_kg && lmsData[session.sex]?.weight?.[newEntry.age_month]) {
+                 newEntry.w_percentile = calculatePercentile(newEntry.weight_kg, lmsData[session.sex].weight[newEntry.age_month]);
+            }
+            session.history.push(newEntry);
+            const responseText = session.history.length >= 2 ? "정보가 추가되었습니다. '분석'이라고 말씀해주세요." : "정보가 입력되었습니다. 과거 정보를 1개 더 입력해주세요.";
+            finalResponse = createTextResponse(responseText);
+        } else if (action === 'generate_report' && session.history?.length >= 2) {
+            console.log("그래프 생성 시작 (POST 방식)...");
+            // --- ★★★ 최종 수정: await으로 짧은 URL 받아오기 ★★★ ---
+            const imageUrl = await generateShortChartUrl(session); 
+            console.log("단축된 그래프 URL 생성 완료:", imageUrl);
+            const summary = `${session.history.length}개 기록으로 분석했어요.\n12개월 후 예상 성장치도 표시됩니다.`;
+            finalResponse = createImageResponse(imageUrl, summary);
+            delete userSessions[userId];
+        } else if (action === 'reset') {
+            delete userSessions[userId];
+            finalResponse = createTextResponse("네, 처음부터 다시 시작하겠습니다.");
+        } else {
+            finalResponse = createTextResponse(session.sex ? "다음 정보를 알려주세요." : "안녕하세요! 아이의 성별, 나이, 키, 몸무게를 알려주세요.");
+        }
+        
+        if (action !== 'generate_report' && action !== 'reset') userSessions[userId] = session;
+
+    } catch (e) {
+        console.error("[/api/process-job] 처리 중 오류 발생:", e);
+        finalResponse = createTextResponse(`분석 중 오류가 발생했습니다: ${e.message}`);
+    }
+
+    try {
+        console.log("카카오 콜백 URL로 최종 응답 전송 시도...", callbackUrl);
+        await fetch(callbackUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(finalResponse)
+        });
+        console.log("카카오 콜백 전송 성공");
+    } catch (e) {
+        console.error("카카오 콜백 전송 실패:", e);
+    }
+    
+    res.status(200).send("OK");
+});
+
+app.get("/", (req, res) => res.send("✅ JS QuickChart (POST) Growth Bot is running!"));
+
+module.exports = app;
