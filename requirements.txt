@@ -1,0 +1,8 @@
+Flask
+gunicorn
+upstash-qstash
+google-generativeai
+jstatpy
+numpy
+matplotlib
+httpx
