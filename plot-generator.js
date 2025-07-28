@@ -40,7 +40,7 @@ async function generateShortChartUrl(session) {
         return { type: 'line', data, borderColor: 'gray', borderWidth: 1, pointRadius: 0, label: `${p}%` };
     };
     
-    // --- ★★★ 최종 수정: Chart.js v3/v4 형식으로 options 객체 재작성 ★★★ ---
+    // --- ★★★ 최종 수정: Chart.js v3/v4 형식으로 options 객체 완벽 재작성 ★★★ ---
     const chartConfig = {
         type: 'line',
         data: {
@@ -48,17 +48,24 @@ async function generateShortChartUrl(session) {
                 ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('height', p), yAxisID: 'yHeight' })),
                 { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })), borderColor: 'deeppink', borderWidth: 2.5, yAxisID: 'yHeight', label: '키' },
                 predHeight && { data: [{x: lastEntry.age_month, y: lastEntry.height_cm}, {x: predMonth, y: predHeight}], borderColor: 'hotpink', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yHeight', label: '키 예측' },
-                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true })), // 범례에서는 숨김
+                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true })),
                 { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })), borderColor: 'deepskyblue', borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게' },
                 predWeight && { data: [{x: lastEntry.age_month, y: lastEntry.weight_kg}, {x: predMonth, y: predWeight}], borderColor: 'lightskyblue', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게 예측' },
             ].filter(Boolean)
         },
         options: {
-            plugins: {
-                title: { display: true, text: '소아 성장 발달 곡선', color: 'white', font: { size: 18 } },
-                legend: { labels: { color: 'white' } }
+            plugins: { // title과 legend는 plugins 객체 안에 있어야 합니다.
+                title: {
+                    display: true,
+                    text: '소아 성장 발달 곡선',
+                    color: 'white',
+                    font: { size: 18 }
+                },
+                legend: {
+                    labels: { color: 'white' }
+                }
             },
-            scales: {
+            scales: { // xAxes, yAxes 배열이 아닌 객체 형식으로 변경합니다.
                 x: {
                     title: { display: true, text: '개월수', color: 'white' },
                     ticks: { color: 'white' },
@@ -76,7 +83,7 @@ async function generateShortChartUrl(session) {
                     position: 'right',
                     title: { display: true, text: '몸무게(kg)', color: 'white' },
                     ticks: { color: 'white' },
-                    grid: { drawOnChartArea: false } // 오른쪽 Y축의 그리드 라인은 숨김
+                    grid: { drawOnChartArea: false }
                 },
             }
         }
