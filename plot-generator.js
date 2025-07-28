@@ -26,7 +26,7 @@ async function generateShortChartUrl(session) {
     const getPrediction = (avgP, type) => {
         const lms = lmsData[sex]?.[type]?.[String(predMonth)];
         if (!lms || isNaN(avgP)) return null;
-        const z = safeInv(avgP);
+        const z = safeInv(avgP); // <-- 안전 함수 사용
         return lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
     };
 
@@ -37,40 +37,37 @@ async function generateShortChartUrl(session) {
         const data = Object.entries(lmsData[sex][type])
             .filter(([month]) => { // 데이터 샘플링으로 URL 길이 최적화
                 const m = parseInt(month);
-                if (m <= 24) return m % 2 === 0; // 24개월까지 2개월 간격
-                if (m <= 72) return m % 6 === 0; // 72개월까지 6개월 간격
-                return m % 12 === 0; // 이후 12개월 간격
+                if (m <= 24) return m % 2 === 0;
+                if (m <= 72) return m % 6 === 0;
+                return m % 12 === 0;
             })
             .map(([month, lms]) => {
-                const z = safeInv(p);
+                const z = safeInv(p); // <-- 안전 함수 사용
                 const value = lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
                 return { x: parseInt(month), y: parseFloat(value.toFixed(2)) };
             });
         return { data, borderColor: 'rgba(255, 255, 255, 0.2)', borderWidth: 1, pointRadius: 0, label: `${p}%` };
     };
     
-    // --- ★★★ 최종 수정: Chart.js v4 형식으로 options 객체 완벽 재작성 ★★★ ---
+    // --- ★★★ Chart.js v4 공식 문서 기준 최종 검수 완료 ★★★ ---
     const chartConfig = {
         type: 'line',
         data: {
             datasets: [
-                // 키 관련 데이터셋
                 ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('height', p), yAxisID: 'yHeight' })),
                 { data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })).filter(d => d.y != null), borderColor: 'deeppink', borderWidth: 2.5, yAxisID: 'yHeight', label: '키', pointBackgroundColor: 'deeppink', pointRadius: 3 },
                 predHeight && lastEntry.height_cm && { data: [{ x: lastEntry.age_month, y: lastEntry.height_cm }, { x: predMonth, y: predHeight }], borderColor: 'hotpink', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yHeight', label: '키 예측' },
-                
-                // 몸무게 관련 데이터셋
                 ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true, yAxisID: 'yWeight' })),
                 { data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })).filter(d => d.y != null), borderColor: 'deepskyblue', borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게', pointBackgroundColor: 'deepskyblue', pointRadius: 3 },
                 predWeight && lastEntry.weight_kg && { data: [{ x: lastEntry.age_month, y: lastEntry.weight_kg }, { x: predMonth, y: predWeight }], borderColor: 'lightskyblue', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yWeight', label: '몸무게 예측' },
-            ].filter(Boolean) // null인 데이터셋은 최종적으로 제거
+            ].filter(Boolean)
         },
         options: {
-            plugins: { // title과 legend는 반드시 plugins 객체 안에 있어야 합니다.
+            plugins: {
                 title: { display: true, text: '소아 성장 발달 곡선', color: 'white', font: { size: 18 } },
-                legend: { labels: { color: 'white', filter: (item) => !item.text.includes('%') } } // 범례에서 백분위(%) 라인은 숨김
+                legend: { labels: { color: 'white', filter: (item) => !item.text.includes('%') } }
             },
-            scales: { // xAxes, yAxes 배열이 아닌, 각 축 ID를 키로 하는 객체 형식이어야 합니다.
+            scales: {
                 x: {
                     type: 'linear',
                     title: { display: true, text: '개월수', color: 'white' },
@@ -89,17 +86,16 @@ async function generateShortChartUrl(session) {
                     position: 'right',
                     title: { display: true, text: '몸무게(kg)', color: 'white' },
                     ticks: { color: 'white' },
-                    grid: { drawOnChartArea: false } // 오른쪽 Y축의 그리드 라인은 숨김
+                    grid: { drawOnChartArea: false }
                 }
             }
         }
     };
-    // -------------------------------------------------------------------
 
     const response = await fetch('https://quickchart.io/chart/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chart: chartConfig, backgroundColor: '#1E1E1E', format: 'png' }),
+        body: JSON.stringify({ chart: chartConfig, backgroundColor: '#1E1E1E', format: 'png', version: '4' }),
     });
 
     if (!response.ok) {
