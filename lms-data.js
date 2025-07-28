@@ -1,6 +1,4 @@
-# lms_data.py
-# 사용자가 제공한 전체 데이터를 Python 딕셔너리로 변환
-lms_data = {
+const lmsData = {
   "female": {
     "height": {
       "0": { "L": 1, "M": 49.1477, "S": 0.0379 },
@@ -925,4 +923,6 @@ lms_data = {
       "227": { "L": -0.1127, "M": 68.2146, "S": 0.1292 }
     }
   }
-}
+};
+
+module.exports = lmsData;

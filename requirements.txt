@@ -1,8 +1,0 @@
-Flask
-gunicorn
-upstash_qstash
-google-generativeai
-jstatpy
-numpy
-matplotlib
-httpx

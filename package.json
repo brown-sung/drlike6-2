@@ -1,0 +1,17 @@
+{
+  "name": "drlike-growth-bot-js",
+  "version": "1.0.0",
+  "description": "Child growth chart bot on KakaoTalk using Node.js and Vercel",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.15.0",
+    "@upstash/qstash": "^2.6.0",
+    "chart.js": "^4.4.3",
+    "chart.js-node-canvas": "^4.1.6",
+    "express": "^4.19.2",
+    "jstat": "^1.9.6"
+  }
+}
