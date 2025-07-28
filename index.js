@@ -3,10 +3,12 @@ const express = require('express');
 const { Client } = require('@upstash/qstash');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const jStat = require('jstat');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
 
 const lmsData = require('./lms-data.js');
 const { getDecisionPrompt } = require('./prompts.js');
-const { generateShortChartUrl } = require('./plot-generator.js'); // 변경됨
+const { generateShortChartUrl } = require('./plot-generator.js');
 
 const app = express();
 app.use(express.json());
@@ -29,25 +31,15 @@ function calculatePercentile(value, lms) {
     const percentile = jStat.normal.cdf(zScore, 0, 1) * 100;
     return parseFloat(percentile.toFixed(1));
 }
-
 async function callGeminiForDecision(session, userInput) {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = getDecisionPrompt(session, userInput);
-    
-    console.log("Gemini API 호출 시작...");
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
-    console.log("Gemini API 응답 수신 (Raw):", responseText);
-
     const match = responseText.match(/\{[\s\S]*\}/);
-    if (!match) {
-        throw new Error("AI가 유효하지 않은 형식의 답변을 보냈습니다.");
-    }
-    const cleanedJsonString = match[0];
-    
-    return JSON.parse(cleanedJsonString);
+    if (!match) throw new Error("AI가 유효하지 않은 형식의 답변을 보냈습니다.");
+    return JSON.parse(match[0]);
 }
-
 const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
 const createImageResponse = (imageUrl, summary) => ({
     version: "2.0",
@@ -56,20 +48,13 @@ const createImageResponse = (imageUrl, summary) => ({
             basicCard: {
                 title: "성장 발달 분석 결과",
                 description: summary,
-                thumbnail: {
-                    imageUrl: imageUrl
-                },
-                buttons: [
-                    {
-                        action: "message",
-                        label: "처음부터 다시하기",
-                        messageText: "다시"
-                    }
-                ]
+                thumbnail: { imageUrl: imageUrl },
+                buttons: [{ action: "message", label: "처음부터 다시하기", messageText: "다시" }]
             }
         }]
     }
 });
+
 
 app.post('/skill', async (req, res) => {
     try {
@@ -98,30 +83,25 @@ app.post('/api/process-job', async (req, res) => {
     try {
         const decision = await callGeminiForDecision(session, utterance);
         const { action, data } = decision;
-        console.log(`[Action: ${action}]`, "Data:", data);
 
         if (data?.sex && !session.sex) session.sex = data.sex;
 
         if (action === 'add_data' && data.age_month && (data.height_cm || data.weight_kg)) {
-            const newEntry = {
-                age_month: data.age_month,
-                height_cm: data.height_cm,
-                weight_kg: data.weight_kg,
-            };
-            if (session.sex && newEntry.height_cm && lmsData[session.sex]?.height?.[newEntry.age_month]) {
-                 newEntry.h_percentile = calculatePercentile(newEntry.height_cm, lmsData[session.sex].height[newEntry.age_month]);
+            const newEntry = { age_month: data.age_month, height_cm: data.height_cm, weight_kg: data.weight_kg };
+            const ageKey = String(newEntry.age_month);
+            if (session.sex && newEntry.height_cm && lmsData[session.sex]?.height?.[ageKey]) {
+                 newEntry.h_percentile = calculatePercentile(newEntry.height_cm, lmsData[session.sex].height[ageKey]);
             }
-            if (session.sex && newEntry.weight_kg && lmsData[session.sex]?.weight?.[newEntry.age_month]) {
-                 newEntry.w_percentile = calculatePercentile(newEntry.weight_kg, lmsData[session.sex].weight[newEntry.age_month]);
+            if (session.sex && newEntry.weight_kg && lmsData[session.sex]?.weight?.[ageKey]) {
+                 newEntry.w_percentile = calculatePercentile(newEntry.weight_kg, lmsData[session.sex].weight[ageKey]);
             }
             session.history.push(newEntry);
             const responseText = session.history.length >= 2 ? "정보가 추가되었습니다. '분석'이라고 말씀해주세요." : "정보가 입력되었습니다. 과거 정보를 1개 더 입력해주세요.";
             finalResponse = createTextResponse(responseText);
         } else if (action === 'generate_report' && session.history?.length >= 2) {
-            console.log("그래프 생성 시작 (POST 방식)...");
-            // --- ★★★ 최종 수정: await으로 짧은 URL 받아오기 ★★★ ---
+            console.log("그래프 생성 시작...");
             const imageUrl = await generateShortChartUrl(session); 
-            console.log("단축된 그래프 URL 생성 완료:", imageUrl);
+            console.log("그래프 URL 생성 완료:", imageUrl);
             const summary = `${session.history.length}개 기록으로 분석했어요.\n12개월 후 예상 성장치도 표시됩니다.`;
             finalResponse = createImageResponse(imageUrl, summary);
             delete userSessions[userId];
@@ -140,7 +120,7 @@ app.post('/api/process-job', async (req, res) => {
     }
 
     try {
-        console.log("카카오 콜백 URL로 최종 응답 전송 시도...", callbackUrl);
+        console.log("카카오 콜백 URL로 최종 응답 전송 시도...");
         await fetch(callbackUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -154,6 +134,6 @@ app.post('/api/process-job', async (req, res) => {
     res.status(200).send("OK");
 });
 
-app.get("/", (req, res) => res.send("✅ JS QuickChart (POST) Growth Bot is running!"));
+app.get("/", (req, res) => res.send("✅ Final JS Growth Bot is running!"));
 
 module.exports = app;
