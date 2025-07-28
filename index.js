@@ -5,7 +5,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const jStat = require('jstat');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
-
 const lmsData = require('./lms-data.js');
 const { getDecisionPrompt } = require('./prompts.js');
 const { generateShortChartUrl } = require('./plot-generator.js');
@@ -54,7 +53,6 @@ const createImageResponse = (imageUrl, summary) => ({
         }]
     }
 });
-
 
 app.post('/skill', async (req, res) => {
     try {
