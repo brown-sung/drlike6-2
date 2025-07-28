@@ -6,12 +6,16 @@ const jStat = require('jstat');
 
 const lmsData = require('./lms-data.js');
 const { getDecisionPrompt } = require('./prompts.js');
-const { generateGrowthPlotUrl } = require('./plot-generator.js'); // <-- 변경된 부분
+const { generateGrowthPlotUrl } = require('./plot-generator.js');
 
 const app = express();
 app.use(express.json());
 
 const { GEMINI_API_KEY, QSTASH_TOKEN, VERCEL_URL } = process.env;
+
+if (!GEMINI_API_KEY || !QSTASH_TOKEN || !VERCEL_URL) {
+    console.error("중요 환경 변수가 누락되었습니다!");
+}
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const qstash = new Client({ token: QSTASH_TOKEN });
@@ -29,9 +33,28 @@ function calculatePercentile(value, lms) {
 async function callGeminiForDecision(session, userInput) {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = getDecisionPrompt(session, userInput);
+    
+    console.log("Gemini API 호출 시작...");
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
-    return JSON.parse(responseText);
+    console.log("Gemini API 응답 수신 (Raw):", responseText);
+
+    // --- ★★★ 최종 수정: Markdown 블록 제거 로직 추가 ★★★ ---
+    const match = responseText.match(/\{[\s\S]*\}/);
+    if (!match) {
+        console.error("Gemini 응답에서 유효한 JSON 블록을 찾지 못했습니다.");
+        throw new Error("AI가 유효하지 않은 형식의 답변을 보냈습니다.");
+    }
+    const cleanedJsonString = match[0];
+    console.log("정리된 JSON 문자열:", cleanedJsonString);
+    // -----------------------------------------------------------
+
+    try {
+        return JSON.parse(cleanedJsonString);
+    } catch (e) {
+        console.error("정리된 JSON 파싱 실패:", e);
+        throw new Error("AI가 보낸 답변의 JSON 구조가 잘못되었습니다.");
+    }
 }
 
 const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
@@ -51,6 +74,7 @@ const createImageResponse = (imageUrl, summary) => ({
 
 app.post('/skill', async (req, res) => {
     try {
+        console.log("[/skill] 요청 수신");
         const userId = req.body.userRequest.user.id;
         const jobPayload = { reqBody: req.body, session: userSessions[userId] || { history: [] } };
         
@@ -58,15 +82,16 @@ app.post('/skill', async (req, res) => {
             url: `https://${VERCEL_URL}/api/process-job`,
             body: jobPayload,
         });
-
+        console.log("[/skill] QStash 작업 게시 완료");
         res.json({ version: "2.0", useCallback: true });
     } catch (e) {
-        console.error("Error in /skill:", e);
-        res.status(500).json(createTextResponse("요청 처리 중 오류가 발생했습니다."));
+        console.error("[/skill] 오류 발생:", e);
+        res.status(500).json(createTextResponse("요청 처리 중 서버 오류가 발생했습니다."));
     }
 });
 
 app.post('/api/process-job', async (req, res) => {
+    console.log("[/api/process-job] QStash로부터 작업 수신");
     const { reqBody, session } = req.body;
     const { userRequest: { user: { id: userId }, utterance, callbackUrl } } = reqBody;
     let finalResponse;
@@ -74,6 +99,7 @@ app.post('/api/process-job', async (req, res) => {
     try {
         const decision = await callGeminiForDecision(session, utterance);
         const { action, data } = decision;
+        console.log(`[Action: ${action}]`, "Data:", data);
 
         if (data?.sex && !session.sex) session.sex = data.sex;
 
@@ -83,14 +109,20 @@ app.post('/api/process-job', async (req, res) => {
                 height_cm: data.height_cm,
                 weight_kg: data.weight_kg,
             };
-            if (session.sex && newEntry.height_cm) newEntry.h_percentile = calculatePercentile(newEntry.height_cm, lmsData[session.sex].height[newEntry.age_month]);
-            if (session.sex && newEntry.weight_kg) newEntry.w_percentile = calculatePercentile(newEntry.weight_kg, lmsData[session.sex].weight[newEntry.age_month]);
+            if (session.sex && newEntry.height_cm && lmsData[session.sex]?.height?.[newEntry.age_month]) {
+                 newEntry.h_percentile = calculatePercentile(newEntry.height_cm, lmsData[session.sex].height[newEntry.age_month]);
+            }
+            if (session.sex && newEntry.weight_kg && lmsData[session.sex]?.weight?.[newEntry.age_month]) {
+                 newEntry.w_percentile = calculatePercentile(newEntry.weight_kg, lmsData[session.sex].weight[newEntry.age_month]);
+            }
             session.history.push(newEntry);
             const responseText = session.history.length >= 2 ? "정보가 추가되었습니다. '분석'이라고 말씀해주세요." : "정보가 입력되었습니다. 과거 정보를 1개 더 입력해주세요.";
             finalResponse = createTextResponse(responseText);
         } else if (action === 'generate_report' && session.history?.length >= 2) {
-            const imageUrl = generateGrowthPlotUrl(session); // <-- 변경된 부분
-            const summary = `${session.history.length}개 기록으로 분석했어요. 12개월 후 예상 성장치도 표시됩니다.`;
+            console.log("그래프 생성 시작...");
+            const imageUrl = generateGrowthPlotUrl(session);
+            console.log("그래프 URL 생성 완료:", imageUrl);
+            const summary = `${session.history.length}개 기록으로 분석했어요.\n12개월 후 예상 성장치도 표시됩니다.`;
             finalResponse = createImageResponse(imageUrl, summary);
             delete userSessions[userId];
         } else if (action === 'reset') {
@@ -103,15 +135,21 @@ app.post('/api/process-job', async (req, res) => {
         if (action !== 'generate_report' && action !== 'reset') userSessions[userId] = session;
 
     } catch (e) {
-        console.error("Error in /api/process-job:", e);
+        console.error("[/api/process-job] 처리 중 오류 발생:", e);
         finalResponse = createTextResponse(`분석 중 오류가 발생했습니다: ${e.message}`);
     }
 
-    await fetch(callbackUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(finalResponse)
-    });
+    try {
+        console.log("카카오 콜백 URL로 최종 응답 전송 시도...", callbackUrl);
+        await fetch(callbackUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(finalResponse)
+        });
+        console.log("카카오 콜백 전송 성공");
+    } catch (e) {
+        console.error("카카오 콜백 전송 실패:", e);
+    }
     
     res.status(200).send("OK");
 });
