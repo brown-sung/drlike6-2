@@ -1,13 +1,12 @@
 // index.js
 const express = require('express');
-const path = require('path');
 const { Client } = require('@upstash/qstash');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const jStat = require('jstat');
 
 const lmsData = require('./lms-data.js');
 const { getDecisionPrompt } = require('./prompts.js');
-const { generateGrowthPlot } = require('./plot-generator.js');
+const { generateGrowthPlotUrl } = require('./plot-generator.js'); // <-- 변경된 부분
 
 const app = express();
 app.use(express.json());
@@ -17,7 +16,7 @@ const { GEMINI_API_KEY, QSTASH_TOKEN, VERCEL_URL } = process.env;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const qstash = new Client({ token: QSTASH_TOKEN });
 
-const userSessions = {}; // 휘발성 세션
+const userSessions = {};
 
 function calculatePercentile(value, lms) {
     if (!lms || value == null) return null;
@@ -48,11 +47,6 @@ const createImageResponse = (imageUrl, summary) => ({
             }
         }]
     }
-});
-
-app.use('/static', express.static(path.join(__dirname, 'static')));
-app.get('/static/:filename', (req, res) => {
-    res.sendFile(path.join('/tmp', req.params.filename));
 });
 
 app.post('/skill', async (req, res) => {
@@ -95,11 +89,10 @@ app.post('/api/process-job', async (req, res) => {
             const responseText = session.history.length >= 2 ? "정보가 추가되었습니다. '분석'이라고 말씀해주세요." : "정보가 입력되었습니다. 과거 정보를 1개 더 입력해주세요.";
             finalResponse = createTextResponse(responseText);
         } else if (action === 'generate_report' && session.history?.length >= 2) {
-            const imagePath = await generateGrowthPlot(userId, session);
-            const imageUrl = `https://${VERCEL_URL}/static/${path.basename(imagePath)}`;
+            const imageUrl = generateGrowthPlotUrl(session); // <-- 변경된 부분
             const summary = `${session.history.length}개 기록으로 분석했어요. 12개월 후 예상 성장치도 표시됩니다.`;
             finalResponse = createImageResponse(imageUrl, summary);
-            delete userSessions[userId]; // 세션 초기화
+            delete userSessions[userId];
         } else if (action === 'reset') {
             delete userSessions[userId];
             finalResponse = createTextResponse("네, 처음부터 다시 시작하겠습니다.");
@@ -123,6 +116,6 @@ app.post('/api/process-job', async (req, res) => {
     res.status(200).send("OK");
 });
 
-app.get("/", (req, res) => res.send("✅ JS Growth Chart Bot is running!"));
+app.get("/", (req, res) => res.send("✅ JS QuickChart Growth Bot is running!"));
 
 module.exports = app;
