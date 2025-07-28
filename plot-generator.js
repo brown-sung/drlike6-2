@@ -1,31 +1,8 @@
 // plot-generator.js
-const fs = require('fs');
-const path = require('path');
-const { ChartJSNodeCanvas } = require('chart.js-node-canvas');
 const jStat = require('jstat');
 const lmsData = require('./lms-data');
 
-const width = 800;
-const height = 1000;
-
-const chartCallback = (ChartJS) => {
-    ChartJS.defaults.font.family = 'Arial'; // Vercel 기본 폰트 사용
-    ChartJS.register({
-        id: 'custom_canvas_background_color',
-        beforeDraw: (chart) => {
-            const ctx = chart.canvas.getContext('2d');
-            ctx.save();
-            ctx.globalCompositeOperation = 'destination-over';
-            ctx.fillStyle = '#1E1E1E';
-            ctx.fillRect(0, 0, chart.width, chart.height);
-            ctx.restore();
-        }
-    });
-};
-
-const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height, chartCallback });
-
-async function generateGrowthPlot(userId, session) {
+function generateGrowthPlotUrl(session) {
     const { sex, history } = session;
     const sortedHistory = [...history].sort((a, b) => a.age_month - b.age_month);
 
@@ -53,43 +30,39 @@ async function generateGrowthPlot(userId, session) {
             const value = lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
             return { x: parseInt(month), y: value };
         });
-        return {
-            type: 'line', data, borderColor: 'gray', borderWidth: 0.8, pointRadius: 0,
-        };
+        return { type: 'line', data, borderColor: 'gray', borderWidth: 1, pointRadius: 0, label: `${p}%` };
     };
-
-    const configuration = {
+    
+    // QuickChart에 보낼 Chart.js 설정 객체
+    const chartConfig = {
         type: 'line',
         data: {
             datasets: [
-                // Background percentiles
-                ...[3, 10, 50, 90, 97].flatMap(p => [createPercentileDataset('height', p), createPercentileDataset('weight', p)]),
-                // User data
-                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })), borderColor: 'deeppink', yAxisID: 'yHeight', label: '키' },
-                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })), borderColor: 'deepskyblue', yAxisID: 'yWeight', label: '몸무게' },
-                // Prediction data
-                predHeight && { data: [{x: lastEntry.age_month, y: lastEntry.height_cm}, {x: predMonth, y: predHeight}], borderColor: 'hotpink', borderDash: [5, 5], yAxisID: 'yHeight', label: '키 예측' },
-                predWeight && { data: [{x: lastEntry.age_month, y: lastEntry.weight_kg}, {x: predMonth, y: lastEntry.weight_kg}, {x: predMonth, y: predWeight}], borderColor: 'lightskyblue', borderDash: [5, 5], yAxisID: 'yWeight', label: '몸무게 예측' },
-            ].filter(Boolean) // Filter out null prediction datasets
+                // Height Data
+                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('height', p), yAxisID: 'yHeight' })),
+                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.height_cm })), borderColor: 'deeppink', borderWidth: 2, yAxisID: 'yHeight', label: '키' },
+                predHeight && { data: [{x: lastEntry.age_month, y: lastEntry.height_cm}, {x: predMonth, y: predHeight}], borderColor: 'hotpink', borderDash: [5, 5], borderWidth: 2, yAxisID: 'yHeight', label: '키 예측' },
+                // Weight Data
+                ...[3, 10, 50, 90, 97].map(p => ({ ...createPercentileDataset('weight', p), hidden: true })), // 범례에서 숨김
+                { type: 'line', data: sortedHistory.map(d => ({ x: d.age_month, y: d.weight_kg })), borderColor: 'deepskyblue', borderWidth: 2, yAxisID: 'yWeight', label: '몸무게' },
+                predWeight && { data: [{x: lastEntry.age_month, y: lastEntry.weight_kg}, {x: predMonth, y: predWeight}], borderColor: 'lightskyblue', borderDash: [5, 5], borderWidth: 2, yAxisID: 'yWeight', label: '몸무게 예측' },
+            ].filter(Boolean)
         },
         options: {
+            title: { display: true, text: '소아 성장 발달 곡선', fontColor: 'white' },
             scales: {
-                x: { title: { display: true, text: '개월수', color: 'white' }, ticks: { color: 'white' }, grid: { color: 'rgba(255, 255, 255, 0.2)' } },
-                yHeight: { type: 'linear', position: 'left', title: { display: true, text: '키(cm)', color: 'white' }, ticks: { color: 'white' }, grid: { color: 'rgba(255, 255, 255, 0.2)' } },
-                yWeight: { type: 'linear', position: 'right', title: { display: true, text: '몸무게(kg)', color: 'white' }, ticks: { color: 'white' }, grid: { drawOnChartArea: false } },
+                xAxes: [{ title: { display: true, text: '개월수', fontColor: 'white' }, ticks: { fontColor: 'white' }, gridLines: { color: 'rgba(255, 255, 255, 0.2)' } }],
+                yAxes: [
+                    { id: 'yHeight', type: 'linear', position: 'left', scaleLabel: { display: true, labelString: '키(cm)', fontColor: 'white' }, ticks: { fontColor: 'white' }, gridLines: { color: 'rgba(255, 255, 255, 0.2)' } },
+                    { id: 'yWeight', type: 'linear', position: 'right', scaleLabel: { display: true, labelString: '몸무게(kg)', fontColor: 'white' }, ticks: { fontColor: 'white' }, gridLines: { drawOnChartArea: false } },
+                ]
             },
-            plugins: { legend: { labels: { color: 'white' } } }
+            legend: { labels: { fontColor: 'white' } }
         }
     };
-    
-    // 이중 축 그래프를 그리기 위해 두 개의 차트를 하나로 합치는 대신, 한 차트에서 Y축을 분리합니다.
-    // 위 configuration에서 yAxisID를 사용하여 이를 구현했습니다.
 
-    const buffer = await chartJSNodeCanvas.renderToBuffer(configuration);
-    const filename = `plot_${userId}.png`;
-    const filepath = path.join('/tmp', filename);
-    fs.writeFileSync(filepath, buffer);
-    return filepath;
+    const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
+    return `https://quickchart.io/chart?bkg=%231E1E1E&c=${encodedConfig}`;
 }
 
-module.exports = { generateGrowthPlot };
+module.exports = { generateGrowthPlotUrl };
