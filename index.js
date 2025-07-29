@@ -8,6 +8,7 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 const lmsData = require('./lms-data.js');
 const { getDecisionPrompt } = require('./prompts.js');
 const { generateShortChartUrl } = require('./plot-generator.js');
+const { getClosestLms } = require('./utils.js');
 
 const app = express();
 app.use(express.json());
@@ -30,6 +31,12 @@ function calculatePercentile(value, lms) {
     return parseFloat(percentile.toFixed(1));
 }
 
+function getPeerAverage(sex, age, type) {
+    const lms = getClosestLms(sex, age, type);
+    if (!lms) return null;
+    return lms.M;
+}
+
 async function callGeminiForDecision(session, userInput) {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = getDecisionPrompt(session, userInput);
@@ -45,7 +52,7 @@ async function callGeminiForDecision(session, userInput) {
 }
 
 const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
-const createFinalReportResponse = (urls, predictions) => {
+const createFinalReportResponse = (lastEntry, peerAverages, urls, predictions) => {
     const items = [];
     if (urls.heightUrl) {
         let description = "예측 데이터가 부족합니다.";
@@ -53,7 +60,7 @@ const createFinalReportResponse = (urls, predictions) => {
             description = `${predictions.predHeight.toFixed(1)}cm (평균 ${predictions.avgHP.toFixed(1)}백분위 유지 시)`;
         }
         items.push({
-            title: "키 성장 분석 (12개월 후 예상)",
+            title: `키 성장 분석 (12개월 후 예상)`,
             description: description,
             thumbnail: { imageUrl: urls.heightUrl },
             buttons: [{ action: "message", label: "처음부터 다시하기", messageText: "다시" }]
@@ -61,11 +68,11 @@ const createFinalReportResponse = (urls, predictions) => {
     }
     if (urls.weightUrl) {
         let description = "예측 데이터가 부족합니다.";
-         if (predictions.predWeight && !isNaN(predictions.avgWP)) {
+        if (predictions.predWeight && !isNaN(predictions.avgWP)) {
             description = `${predictions.predWeight.toFixed(1)}kg (평균 ${predictions.avgWP.toFixed(1)}백분위 유지 시)`;
         }
         items.push({
-            title: "몸무게 성장 분석 (12개월 후 예상)",
+            title: `몸무게 성장 분석 (12개월 후 예상)`,
             description: description,
             thumbnail: { imageUrl: urls.weightUrl },
             buttons: [{ action: "message", label: "처음부터 다시하기", messageText: "다시" }]
@@ -118,14 +125,13 @@ app.post('/api/process-job', async (req, res) => {
             const sortedHistory = [...session.history].sort((a, b) => a.age_month - b.age_month);
             const lastEntry = sortedHistory[sortedHistory.length - 1];
             const predMonth = lastEntry.age_month + 12;
-
             const hPercentiles = sortedHistory.map(d => d.h_percentile).filter(p => p != null);
             const wPercentiles = sortedHistory.map(d => d.w_percentile).filter(p => p != null);
             const avgHP = hPercentiles.length > 0 ? hPercentiles.reduce((a, b) => a + b, 0) / hPercentiles.length : NaN;
             const avgWP = wPercentiles.length > 0 ? wPercentiles.reduce((a, b) => a + b, 0) / wPercentiles.length : NaN;
             
             const getPrediction = (avgP, type) => {
-                const lms = lmsData[session.sex]?.[type]?.[String(predMonth)];
+                const lms = getClosestLms(session.sex, predMonth, type);
                 if (!lms || isNaN(avgP)) return null;
                 const z = jStat.normal.inv(Math.max(0.001, Math.min(99.999, avgP)) / 100, 0, 1);
                 return lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
@@ -134,10 +140,15 @@ app.post('/api/process-job', async (req, res) => {
             const predHeight = getPrediction(avgHP, 'height');
             const predWeight = getPrediction(avgWP, 'weight');
             
+            const peerAverages = {
+                height: getPeerAverage(session.sex, lastEntry.age_month, 'height'),
+                weight: getPeerAverage(session.sex, lastEntry.age_month, 'weight')
+            };
+            
             const urls = await generateShortChartUrl(session, { predHeight, predWeight }); 
             console.log("그래프 URL 생성 완료:", urls);
             
-            finalResponse = createFinalReportResponse(urls, { predHeight, predWeight, avgHP, avgWP });
+            finalResponse = createFinalReportResponse(lastEntry, peerAverages, urls, { predHeight, predWeight, avgHP, avgWP });
             delete userSessions[userId];
         } else if (action === 'reset') {
             delete userSessions[userId];
