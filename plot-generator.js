@@ -7,52 +7,28 @@ function safeInv(percentile) {
     return jStat.normal.inv(p, 0, 1);
 }
 
-// 특정 개월 수에 가장 가까운 LMS 데이터를 찾는 헬퍼 함수
-function getClosestLms(sex, age, type) {
-    const ageNum = parseInt(age);
-    const availableAges = Object.keys(lmsData[sex][type]).map(Number);
-    const closestAge = availableAges.reduce((prev, curr) => 
-        (Math.abs(curr - ageNum) < Math.abs(prev - ageNum) ? curr : prev)
-    );
-    return lmsData[sex][type][String(closestAge)];
-}
-
-// 특정 개월, 특정 백분위의 값을 계산하는 함수
-function getLmsValue(sex, age, type, percentile) {
-    const lms = getClosestLms(sex, age, type);
-    if (!lms) return null;
-    const z = safeInv(percentile);
-    return lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
-}
-
-async function generateChartUrls(session) {
+// 이 함수는 이제 index.js에서 계산된 예측값을 받아 그래프만 그립니다.
+async function generateShortChartUrl(session, predictions) {
     const { sex, history } = session;
-    if (!sex || !history || history.length === 0) {
-        throw new Error("차트 생성을 위한 데이터가 부족합니다.");
-    }
+    const { predHeight, predWeight } = predictions;
+
     const sortedHistory = [...history].sort((a, b) => a.age_month - b.age_month);
+    const lastEntry = sortedHistory[sortedHistory.length - 1];
 
     const xMin = Math.max(0, sortedHistory[0].age_month - 3);
-    const xMax = sortedHistory[sortedHistory.length - 1].age_month + 15;
+    const xMax = lastEntry.age_month + 15;
 
     const createChartConfig = (type) => {
         const valueKey = type === 'height' ? 'height_cm' : 'weight_kg';
         const percentileKey = type === 'height' ? 'h_percentile' : 'w_percentile';
         
-        const yMin = getLmsValue(sex, xMin, type, 3) * 0.9;
-        const yMax = getLmsValue(sex, xMax, type, 97) * 1.1;
+        const yMinRaw = getLmsValue(sex, xMin, type, 3);
+        const yMaxRaw = getLmsValue(sex, xMax, type, 97);
+        const yMin = yMinRaw ? yMinRaw * 0.9 : 0;
+        const yMax = yMaxRaw ? yMaxRaw * 1.1 : 100;
         const stepSize = type === 'height' ? 10 : 1;
         
-        const lastEntry = sortedHistory[sortedHistory.length - 1];
-        const avgP = sortedHistory.map(d => d[percentileKey]).filter(p => p != null).reduce((a, b) => a + b, 0) / sortedHistory.length;
-        
-        const getPrediction = (p) => {
-            const lms = getClosestLms(sex, xMax, type);
-            if (!lms || isNaN(p)) return null;
-            const z = safeInv(p);
-            return lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
-        };
-        const predValue = getPrediction(avgP);
+        const predValue = type === 'height' ? predHeight : predWeight;
 
         const PERCENTILE_COLORS = { 3: '#4A8AF2', 5: '#4A8AF2', 10: '#4A8AF2', 25: '#87CEEB', 50: '#87CEEB', 75: '#FFC107', 90: '#FFA000', 95: '#FFA000', 97: '#FFA000' };
 
@@ -97,18 +73,42 @@ async function generateChartUrls(session) {
         const response = await fetch('https://quickchart.io/chart/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chart: config, backgroundColor: 'white', format: 'png', version: '4' }),
+            body: JSON.stringify({
+                chart: config,
+                backgroundColor: 'white',
+                width: 500, // <-- 세로형 비율 설정
+                height: 700, // <-- 세로형 비율 설정
+                format: 'png',
+                version: '4'
+            }),
         });
         if (!response.ok) throw new Error(`QuickChart API Error for ${type}`);
         return (await response.json()).url;
     };
 
-    const [heightUrl, weightUrl] = await Promise.all([
-        createChartPromise('height'),
-        createChartPromise('weight')
-    ]);
+    // 키 또는 몸무게 데이터가 하나라도 있을 경우에만 해당 차트 생성
+    const promises = [];
+    if (sortedHistory.some(d => d.height_cm != null)) {
+        promises.push(createChartPromise('height'));
+    } else {
+        promises.push(Promise.resolve(null)); // 키 데이터 없으면 null 반환
+    }
 
+    if (sortedHistory.some(d => d.weight_kg != null)) {
+        promises.push(createChartPromise('weight'));
+    } else {
+        promises.push(Promise.resolve(null)); // 몸무게 데이터 없으면 null 반환
+    }
+
+    const [heightUrl, weightUrl] = await Promise.all(promises);
     return { heightUrl, weightUrl };
 }
 
-module.exports = { generateShortChartUrl: generateChartUrls }; // 이름 변경
+function getLmsValue(sex, age, type, percentile) {
+    const lms = getClosestLms(sex, age, type);
+    if (!lms) return null;
+    const z = safeInv(percentile);
+    return lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
+}
+
+module.exports = { generateShortChartUrl };
