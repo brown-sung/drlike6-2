@@ -1,17 +1,14 @@
 // plot-generator.js
 const jStat = require('jstat');
 const lmsData = require('./lms-data.js');
-// datalabels 플러그인을 QuickChart에서 사용하기 위해 등록합니다.
 const QuickChart = require('quickchart-js');
-const ChartDataLabels = require('chartjs-plugin-datalabels');
+// const ChartDataLabels = require('chartjs-plugin-datalabels'); // <-- 이 줄을 삭제합니다.
 
-// 백분위수가 0 또는 100에 가까울 때 z-score가 무한대로 가는 것을 방지하는 안정성 함수
 function safeInv(percentile) {
     const p = Math.max(0.001, Math.min(99.999, percentile)) / 100;
     return jStat.normal.inv(p, 0, 1);
 }
 
-// 특정 개월, 특정 백분위의 값을 계산하는 함수
 function getLmsValue(sex, age, type, percentile) {
     const ageNum = parseInt(age);
     if (!lmsData[sex] || !lmsData[sex][type]) return null;
@@ -45,12 +42,11 @@ async function generateShortChartUrl(session, predictions) {
         const stepSize = type === 'height' ? 10 : 2;
         
         const predValue = type === 'height' ? predHeight : predWeight;
-
         const PERCENTILE_COLORS = { 3: '#4A8AF2', 5: '#4A8AF2', 10: '#4A8AF2', 25: '#87CEEB', 50: '#87CEEB', 75: '#FFC107', 90: '#FFA000', 95: '#FFA000', 97: '#FFA000' };
 
         const percentileDatasets = [3, 5, 10, 25, 50, 75, 90, 95, 97].map(p => {
             const data = Object.entries(lmsData[sex][type])
-                .filter(([month]) => parseInt(month) >= xMin && parseInt(month) <= xMax) // X축 범위 내 데이터만 사용
+                .filter(([month]) => parseInt(month) >= xMin && parseInt(month) <= xMax)
                 .map(([month, lms]) => {
                     const z = safeInv(p);
                     const value = lms.L !== 0 ? lms.M * Math.pow((lms.L * lms.S * z + 1), 1 / lms.L) : lms.M * Math.exp(lms.S * z);
@@ -73,7 +69,6 @@ async function generateShortChartUrl(session, predictions) {
                     legend: { display: false },
                     datalabels: {
                         color: '#555', align: 'end', anchor: 'end', font: { size: 10 },
-                        // --- ★★★ 최종 수정: 3, 50, 97 백분위 선에만 라벨 표시 ★★★ ---
                         formatter: (value, context) => {
                             const dataset = context.dataset;
                             const label = dataset.label;
@@ -86,7 +81,7 @@ async function generateShortChartUrl(session, predictions) {
                 },
                 scales: {
                     x: { type: 'linear', min: xMin, max: xMax, title: { display: true, text: '개월수 (월)', color: '#333' }, ticks: { color: '#666' }, grid: { color: 'rgba(0, 0, 0, 0.1)' } },
-                    y: { // Y축은 하나만 사용
+                    y: {
                         type: 'linear',
                         min: parseFloat(yMin.toFixed(1)),
                         max: parseFloat(yMax.toFixed(1)),
@@ -101,7 +96,6 @@ async function generateShortChartUrl(session, predictions) {
 
     const createChartPromise = async (type) => {
         const config = createChartConfig(type);
-        
         const chart = new QuickChart();
         chart.setConfig(config)
              .setBackgroundColor('white')
@@ -109,8 +103,7 @@ async function generateShortChartUrl(session, predictions) {
              .setHeight(700)
              .setVersion('4');
         
-        // datalabels 플러그인을 사용하기 위해 플러그인 등록
-        chart.registerPlugin(ChartDataLabels);
+        // chart.registerPlugin(ChartDataLabels); // <-- 이 줄을 삭제합니다. (오류의 원인)
 
         return chart.getShortUrl();
     };
