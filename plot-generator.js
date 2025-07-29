@@ -18,10 +18,13 @@ async function generateShortChartUrl(session, predictions) {
         
         const yMinRaw = getLmsValue(sex, xMin, type, 3);
         const yMaxRaw = getLmsValue(sex, xMax, type, 97);
-        const yMin = yMinRaw ? yMinRaw * 0.9 : 0;
-        const yMax = yMaxRaw ? yMaxRaw * 1.1 : 100;
-        const stepSize = type === 'height' ? 10 : 1;
         
+        // --- ★★★ 최종 수정: 변수명 오타 수정 ★★★ ---
+        const yMin = yMinRaw ? yMinRaw * 0.9 : 0;
+        const yMax = yMaxRaw ? yMaxRaw * 1.1 : (type === 'height' ? 100 : 20);
+        // ------------------------------------------
+
+        const stepSize = type === 'height' ? 10 : 1;
         const predValue = type === 'height' ? predHeight : predWeight;
 
         const PERCENTILE_COLORS = { 3: '#4A8AF2', 5: '#4A8AF2', 10: '#4A8AF2', 25: '#87CEEB', 50: '#87CEEB', 75: '#FFC107', 90: '#FFA000', 95: '#FFA000', 97: '#FFA000' };
@@ -49,7 +52,7 @@ async function generateShortChartUrl(session, predictions) {
                     ...percentileDatasets.map(d => ({ ...d, yAxisID: 'yValue' })),
                     { data: sortedHistory.map(d => ({ x: d.age_month, y: d[valueKey] })).filter(d => d.y != null), borderColor: '#00C853', borderWidth: 2.5, yAxisID: 'yValue', label: '내 아이', pointBackgroundColor: '#00C853', pointRadius: 5, pointStyle: 'circle' },
                     predValue && lastEntry[valueKey] && { data: [{ x: lastEntry.age_month, y: lastEntry[valueKey] }, { x: xMax, y: predValue }], borderColor: '#00C853', borderDash: [5, 5], borderWidth: 2.5, yAxisID: 'yValue', label: '예측' },
-                    { data: sortedHistory.map(d => ({ x: d.age_month, y: d[percentileKey] })).filter(d => d.y != null), borderColor: 'rgba(255, 99, 132, 0)', yAxisID: 'yPercentile', pointBackgroundColor: '#00C853', pointRadius: 5, pointStyle: 'circle', showLine: false },
+                    { data: sortedHistory.map(d => ({ x: d.age_month, y: d[percentileKey] })).filter(d => d.y != null), borderColor: 'rgba(0,0,0,0)', yAxisID: 'yPercentile', pointBackgroundColor: '#00C853', pointRadius: 5, pointStyle: 'circle', showLine: false },
                 ].filter(Boolean)
             },
             options: {
@@ -62,7 +65,15 @@ async function generateShortChartUrl(session, predictions) {
                 },
                 scales: {
                     x: { type: 'linear', min: xMin, max: xMax, title: { display: true, text: '개월수 (월)', color: '#333' }, ticks: { color: '#666' }, grid: { color: 'rgba(0, 0, 0, 0.1)' } },
-                    yValue: { type: 'linear', position: 'left', min: parseFloat((yMinVal).toFixed(1)), max: parseFloat((yMaxVal).toFixed(1)), title: { display: true, text: type === 'height' ? '키(cm)' : '몸무게(kg)', color: '#333' }, ticks: { color: '#666', stepSize: stepSize }, grid: { color: 'rgba(0, 0, 0, 0.1)' } },
+                    yValue: {
+                        type: 'linear',
+                        position: 'left',
+                        min: parseFloat(yMin.toFixed(1)), // <-- 변수명 오타 수정
+                        max: parseFloat(yMax.toFixed(1)), // <-- 변수명 오타 수정
+                        title: { display: true, text: type === 'height' ? '키(cm)' : '몸무게(kg)', color: '#333' },
+                        ticks: { color: '#666', stepSize: stepSize },
+                        grid: { color: 'rgba(0, 0, 0, 0.1)' }
+                    },
                     yPercentile: { type: 'linear', position: 'right', min: 0, max: 100, title: { display: true, text: '백분위', color: '#333' }, ticks: { color: '#666', stepSize: 25 }, grid: { drawOnChartArea: false } }
                 }
             }
@@ -74,14 +85,7 @@ async function generateShortChartUrl(session, predictions) {
         const response = await fetch('https://quickchart.io/chart/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chart: config,
-                backgroundColor: 'white',
-                width: 500,
-                height: 700,
-                format: 'png',
-                version: '4'
-            }),
+            body: JSON.stringify({ chart: config, backgroundColor: 'white', width: 500, height: 700, format: 'png', version: '4' }),
         });
         if (!response.ok) throw new Error(`QuickChart API Error for ${type}`);
         return (await response.json()).url;

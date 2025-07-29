@@ -52,7 +52,7 @@ async function callGeminiForDecision(session, userInput) {
 }
 
 const createTextResponse = (text) => ({ version: "2.0", template: { outputs: [{ simpleText: { text } }] } });
-const createFinalReportResponse = (lastEntry, peerAverages, urls, predictions) => {
+const createFinalReportResponse = (urls, predictions) => {
     const items = [];
     if (urls.heightUrl) {
         let description = "예측 데이터가 부족합니다.";
@@ -124,7 +124,7 @@ app.post('/api/process-job', async (req, res) => {
             console.log("예측값 및 그래프 생성 시작...");
             const sortedHistory = [...session.history].sort((a, b) => a.age_month - b.age_month);
             const lastEntry = sortedHistory[sortedHistory.length - 1];
-            const predMonth = lastEntry.age_month + 12;
+            const predMonth = lastEntry.age_month + 15; // X축 최대값과 일치
             const hPercentiles = sortedHistory.map(d => d.h_percentile).filter(p => p != null);
             const wPercentiles = sortedHistory.map(d => d.w_percentile).filter(p => p != null);
             const avgHP = hPercentiles.length > 0 ? hPercentiles.reduce((a, b) => a + b, 0) / hPercentiles.length : NaN;
@@ -140,15 +140,10 @@ app.post('/api/process-job', async (req, res) => {
             const predHeight = getPrediction(avgHP, 'height');
             const predWeight = getPrediction(avgWP, 'weight');
             
-            const peerAverages = {
-                height: getPeerAverage(session.sex, lastEntry.age_month, 'height'),
-                weight: getPeerAverage(session.sex, lastEntry.age_month, 'weight')
-            };
-            
             const urls = await generateShortChartUrl(session, { predHeight, predWeight }); 
             console.log("그래프 URL 생성 완료:", urls);
             
-            finalResponse = createFinalReportResponse(lastEntry, peerAverages, urls, { predHeight, predWeight, avgHP, avgWP });
+            finalResponse = createFinalReportResponse(urls, { predHeight, predWeight, avgHP, avgWP });
             delete userSessions[userId];
         } else if (action === 'reset') {
             delete userSessions[userId];
@@ -179,6 +174,6 @@ app.post('/api/process-job', async (req, res) => {
     res.status(200).send("OK");
 });
 
-app.get("/", (req, res) => res.send("✅ Final JS Growth Bot (Vertical, with Logging) is running!"));
+app.get("/", (req, res) => res.send("✅ Final JS Growth Bot (All Fixes Applied) is running!"));
 
 module.exports = app;
